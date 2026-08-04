@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from openai.types import CreateEmbeddingResponse
 from openai.types.chat import (
@@ -95,10 +97,13 @@ async def test_async_openai_chat_programmed_completion(aclient):
     assert (
         completion.choices[0].message.tool_calls[0].function.name == "get_delivery_date"  # type: ignore
     )
-    assert (
-        completion.choices[0].message.tool_calls[0].function.arguments  # type: ignore
-        == {"order_id": "1337", "order_loc": ["New York", "Mexico City"]}
-    )
+    arguments = completion.choices[0].message.tool_calls[0].function.arguments  # type: ignore
+    # The OpenAI wire format encodes arguments as a JSON string, not an object.
+    assert isinstance(arguments, str)
+    assert json.loads(arguments) == {
+        "order_id": "1337",
+        "order_loc": ["New York", "Mexico City"],
+    }
 
 
 def test_openai_chat_completion_stream(client):
@@ -288,3 +293,131 @@ async def test_async_openai_user_message_is_not_last_matched(aclient):
     message = completion.choices[0].message
     assert isinstance(message, ChatCompletionMessage)
     assert message.content == "{'fake': 'json'}"
+
+
+def accumulate_tool_calls(chunks):
+    """Reassemble streamed tool calls the way a spec-compliant client does.
+
+    Fragments are keyed by `index`, which is the only thing tying a delta back
+    to the call it belongs to. Returns {index: {"id", "type", "name",
+    "arguments"}} plus the finish_reason seen on the final chunk.
+    """
+    calls: dict[int, dict] = {}
+    finish_reason = None
+    for chunk in chunks:
+        choice = chunk.choices[0]
+        finish_reason = choice.finish_reason or finish_reason
+        for delta in choice.delta.tool_calls or []:
+            assert isinstance(delta, ChoiceDeltaToolCall)
+            call = calls.setdefault(
+                delta.index, {"id": None, "type": None, "name": None, "arguments": ""}
+            )
+            if delta.id is not None:
+                call["id"] = delta.id
+            if delta.type is not None:
+                call["type"] = delta.type
+            if delta.function is not None:
+                if delta.function.name is not None:
+                    call["name"] = delta.function.name
+                call["arguments"] += delta.function.arguments or ""
+    return calls, finish_reason
+
+
+def test_openai_function_call_stream_accumulates_by_index(client):
+    calls, finish_reason = accumulate_tool_calls(
+        client.chat.completions.create(
+            model="mock",
+            messages=[{"role": "user", "content": "Where's my order?"}],
+            stream=True,
+        )
+    )
+
+    assert list(calls) == [0]
+    assert calls[0]["name"] == "get_delivery_date"
+    assert calls[0]["type"] == "function"
+    assert calls[0]["id"] is not None
+    assert json.loads(calls[0]["arguments"]) == {
+        "order_id": "1337",
+        "order_loc": ["New York", "Mexico City"],
+    }
+    assert finish_reason == "tool_calls"
+
+
+def test_openai_function_call_stream_repeats_identity_only_once(client):
+    """Only the header delta may carry id/type/name; fragments must not."""
+    headers = 0
+    for chunk in client.chat.completions.create(
+        model="mock",
+        messages=[{"role": "user", "content": "Where's my order?"}],
+        stream=True,
+    ):
+        for delta in chunk.choices[0].delta.tool_calls or []:
+            if delta.id is not None:
+                headers += 1
+                assert delta.function is not None
+                assert delta.function.name == "get_delivery_date"
+                assert delta.function.arguments == ""
+            else:
+                assert delta.function is not None
+                assert delta.function.name is None
+                assert delta.function.arguments
+
+    assert headers == 1
+
+
+def test_openai_parallel_function_calls_stream(client):
+    calls, finish_reason = accumulate_tool_calls(
+        client.chat.completions.create(
+            model="mock",
+            messages=[{"role": "user", "content": "Where are my orders?"}],
+            stream=True,
+        )
+    )
+
+    assert list(calls) == [0, 1]
+    assert json.loads(calls[0]["arguments"]) == {"order_id": "1337"}
+    assert json.loads(calls[1]["arguments"]) == {"order_id": "42"}
+    assert calls[0]["id"] != calls[1]["id"]
+    assert finish_reason == "tool_calls"
+
+
+def test_openai_parallel_function_calls(client):
+    completion = client.chat.completions.create(
+        model="mock", messages=[{"role": "user", "content": "Where are my orders?"}]
+    )
+    tool_calls = completion.choices[0].message.tool_calls
+    assert tool_calls is not None
+    assert [json.loads(call.function.arguments) for call in tool_calls] == [
+        {"order_id": "1337"},
+        {"order_id": "42"},
+    ]
+
+
+def test_openai_function_call_without_arguments(client):
+    completion = client.chat.completions.create(
+        model="mock", messages=[{"role": "user", "content": "Ping the tool"}]
+    )
+    tool_call = completion.choices[0].message.tool_calls[0]  # type: ignore
+    assert tool_call.function.arguments == "{}"
+
+    calls, _ = accumulate_tool_calls(
+        client.chat.completions.create(
+            model="mock",
+            messages=[{"role": "user", "content": "Ping the tool"}],
+            stream=True,
+        )
+    )
+    assert json.loads(calls[0]["arguments"]) == {}
+
+
+def test_openai_header_mock_function_call_encodes_arguments(client):
+    completion = client.chat.completions.create(
+        model="mock",
+        messages=[{"role": "user", "content": "anything"}],
+        extra_headers={
+            "mock-response": 'f:{"name":"my_function","arguments":{"first_arg":"one"}}'
+        },
+    )
+    tool_call = completion.choices[0].message.tool_calls[0]  # type: ignore
+    assert isinstance(tool_call.function.arguments, str)
+    assert json.loads(tool_call.function.arguments) == {"first_arg": "one"}
