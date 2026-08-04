@@ -421,3 +421,44 @@ def test_openai_header_mock_function_call_encodes_arguments(client):
     tool_call = completion.choices[0].message.tool_calls[0]  # type: ignore
     assert isinstance(tool_call.function.arguments, str)
     assert json.loads(tool_call.function.arguments) == {"first_arg": "one"}
+
+
+def test_openai_non_streaming_finish_reason(client):
+    text = client.chat.completions.create(
+        model="mock", messages=[{"role": "user", "content": "How are ya?"}]
+    )
+    assert text.choices[0].finish_reason == "stop"
+
+    tools = client.chat.completions.create(
+        model="mock", messages=[{"role": "user", "content": "Where's my order?"}]
+    )
+    assert tools.choices[0].finish_reason == "tool_calls"
+
+
+def test_openai_content_stream_finishes_with_stop(client):
+    chunks = list(
+        client.chat.completions.create(
+            model="mock",
+            messages=[{"role": "user", "content": "Hello!"}],
+            stream=True,
+        )
+    )
+
+    assert chunks[-1].choices[0].finish_reason == "stop"
+    assert all(chunk.choices[0].finish_reason is None for chunk in chunks[:-1])
+    assert "".join(chunk.choices[0].delta.content or "" for chunk in chunks) == "Hello!"
+
+
+def test_openai_stream_announces_role_once(client):
+    for messages in (
+        [{"role": "user", "content": "Hello!"}],
+        [{"role": "user", "content": "Where are my orders?"}],
+    ):
+        roles = [
+            chunk.choices[0].delta.role
+            for chunk in client.chat.completions.create(
+                model="mock", messages=messages, stream=True
+            )
+            if chunk.choices[0].delta.role is not None
+        ]
+        assert roles == ["assistant"]

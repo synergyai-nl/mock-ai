@@ -43,7 +43,7 @@ def json_response(content: str | None, model: str, tool_calls: list[dict] | None
                     "tool_calls": tool_calls,
                 },
                 "logprobs": None,
-                "finish_reason": "stop",
+                "finish_reason": "tool_calls" if tool_calls else "stop",
             }
         ],
         "usage": {
@@ -81,8 +81,14 @@ def streaming_response(content: str | None, model: str, tool_calls: list[dict] |
         return f"data: {json.dumps(_stream_chunk(id, model, delta, finish_reason))}\n\n"
 
     if content is not None:
-        for character in content:
-            yield chunk({"role": "assistant", "content": character, "tool_calls": None})
+        # `role` is announced once, in the opening chunk, and omitted after —
+        # repeating it on every delta is not what the API does.
+        for position, character in enumerate(content):
+            delta = {"content": character, "tool_calls": None}
+            if position == 0:
+                delta["role"] = "assistant"
+            yield chunk(delta)
+        yield chunk({}, finish_reason="stop")
     elif tool_calls is not None:
         # Each tool call is streamed on its own `index`: one header delta
         # introducing id/type/name with empty arguments, then deltas carrying
@@ -91,23 +97,20 @@ def streaming_response(content: str | None, model: str, tool_calls: list[dict] |
         # together, and repeating id/type/name would corrupt the accumulation.
         for index, tool_call in enumerate(tool_calls):
             function = tool_call["function"]
-            yield chunk(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "index": index,
-                            "id": tool_call["id"],
-                            "type": tool_call["type"],
-                            "function": {
-                                "name": function["name"],
-                                "arguments": "",
-                            },
-                        }
-                    ],
-                }
-            )
+            header = {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "index": index,
+                        "id": tool_call["id"],
+                        "type": tool_call["type"],
+                        "function": {"name": function["name"], "arguments": ""},
+                    }
+                ],
+            }
+            if index == 0:
+                header["role"] = "assistant"
+            yield chunk(header)
             for character in function["arguments"]:
                 yield chunk(
                     {
