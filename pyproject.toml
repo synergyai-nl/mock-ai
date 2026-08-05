@@ -17,7 +17,7 @@ dependencies = [
 openai = ["openai<2.0.0,>=1.59.6"]
 anthropic = ["anthropic<1.0.0,>=0.42.0"]
 mistralai = ["mistralai<2.0.0,>=1.2.6"]
-cohere = ["cohere<6.0.0,>=5.13.6"]
+cohere = ["cohere>=5.13.6,<8.0.0"]
 
 [project.scripts]
 ai-mock = "mockai.cli:cli"
