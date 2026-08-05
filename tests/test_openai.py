@@ -110,18 +110,20 @@ def test_openai_chat_completion_stream(client):
     response = client.chat.completions.create(
         model="mock", messages=[{"role": "user", "content": "Hello!"}], stream=True
     )
-    completion = next(response)
-    assert isinstance(completion, ChatCompletionChunk)
-    assert isinstance(completion.choices[0].delta.content, str)
+    with response:
+        completion = next(response)
+        assert isinstance(completion, ChatCompletionChunk)
+        assert isinstance(completion.choices[0].delta.content, str)
 
 
 async def test_async_openai_chat_completion_stream(aclient):
     response = await aclient.chat.completions.create(
         model="mock", messages=[{"role": "user", "content": "Hello!"}], stream=True
     )
-    completion = await anext(response)
-    assert isinstance(completion, ChatCompletionChunk)
-    assert isinstance(completion.choices[0].delta.content, str)
+    async with response:
+        completion = await anext(response)
+        assert isinstance(completion, ChatCompletionChunk)
+        assert isinstance(completion.choices[0].delta.content, str)
 
 
 def test_openai_function_call(client):
@@ -198,13 +200,14 @@ def test_openai_function_call_stream(client):
         messages=[{"role": "user", "content": "Where's my order?"}],
         stream=True,
     )
-    completion = next(response)
-    assert isinstance(completion, ChatCompletionChunk)
-    assert isinstance(completion.choices[0].delta, ChoiceDelta)
-    assert isinstance(
-        completion.choices[0].delta.tool_calls[0],  # type: ignore
-        ChoiceDeltaToolCall,
-    )
+    with response:
+        completion = next(response)
+        assert isinstance(completion, ChatCompletionChunk)
+        assert isinstance(completion.choices[0].delta, ChoiceDelta)
+        assert isinstance(
+            completion.choices[0].delta.tool_calls[0],  # type: ignore
+            ChoiceDeltaToolCall,
+        )
 
 
 async def test_async_openai_function_call_stream(aclient):
@@ -213,13 +216,14 @@ async def test_async_openai_function_call_stream(aclient):
         messages=[{"role": "user", "content": "Where's my order?"}],
         stream=True,
     )
-    completion = await anext(response)
-    assert isinstance(completion, ChatCompletionChunk)
-    assert isinstance(completion.choices[0].delta, ChoiceDelta)
-    assert isinstance(
-        completion.choices[0].delta.tool_calls[0],  # type: ignore
-        ChoiceDeltaToolCall,
-    )
+    async with response:
+        completion = await anext(response)
+        assert isinstance(completion, ChatCompletionChunk)
+        assert isinstance(completion.choices[0].delta, ChoiceDelta)
+        assert isinstance(
+            completion.choices[0].delta.tool_calls[0],  # type: ignore
+            ChoiceDeltaToolCall,
+        )
 
 
 # Embeddings

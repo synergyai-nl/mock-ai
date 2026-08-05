@@ -41,6 +41,10 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# A deadlocked test blocks in a threading.Lock, where Python cannot run signal
+# handlers — SIGTERM does not land and the job runs until the CI hard limit.
+# Dump every thread's stack instead of leaving a silent hang to guess at.
+faulthandler_timeout = 120
 
 [tool.ruff.lint]
 select = [

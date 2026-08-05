@@ -328,3 +328,8 @@ and you should be good to go!
 ### nodejs
 
 TBD
+
+## License
+
+MIT, as published by the upstream project on
+[PyPI](https://pypi.org/project/ai-mock/). See [LICENSE](LICENSE).
