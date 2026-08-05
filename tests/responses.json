@@ -20,6 +20,32 @@
     }
   },
   {
+    "type": "function",
+    "input": "Where are my orders?",
+    "output": [
+      {
+        "name": "get_delivery_date",
+        "arguments": {
+          "order_id": "1337"
+        }
+      },
+      {
+        "name": "get_delivery_date",
+        "arguments": {
+          "order_id": "42"
+        }
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "input": "Ping the tool",
+    "output": {
+      "name": "no_args_tool",
+      "arguments": {}
+    }
+  },
+  {
     "type": "text",
     "input": "{'order_id': '1337', 'delivery_date': '25/10/2024'}",
     "output": "Your order will arrive the 25th of October."

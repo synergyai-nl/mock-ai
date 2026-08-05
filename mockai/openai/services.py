@@ -1,9 +1,8 @@
 import json
 import logging
 import random
-from itertools import zip_longest
 from time import time
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -12,6 +11,20 @@ from mockai.dependencies import ResponseFile
 from mockai.models.json_file import PreDeterminedResponse
 
 _log = logging.getLogger(__name__)
+
+
+def _encode_arguments(arguments: Any) -> str:
+    """Encode tool call arguments the way the OpenAI wire format requires.
+
+    `function.arguments` is a JSON-encoded *string*, not an object. Responses
+    files declare it as an object, so it is encoded here — the one place both
+    the streaming and non-streaming paths pass through. Values that are
+    already strings are returned unchanged, so callers that supply their own
+    encoded JSON are not double-encoded.
+    """
+    if isinstance(arguments, str):
+        return arguments
+    return json.dumps(arguments)
 
 
 def json_response(content: str | None, model: str, tool_calls: list[dict] | None):
@@ -30,7 +43,7 @@ def json_response(content: str | None, model: str, tool_calls: list[dict] | None
                     "tool_calls": tool_calls,
                 },
                 "logprobs": None,
-                "finish_reason": "stop",
+                "finish_reason": "tool_calls" if tool_calls else "stop",
             }
         ],
         "usage": {
@@ -43,54 +56,72 @@ def json_response(content: str | None, model: str, tool_calls: list[dict] | None
     return response
 
 
+def _stream_chunk(id: str, model: str, delta: dict, finish_reason: str | None = None):
+    return {
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": int(time()),
+        "model": model,
+        "system_fingerprint": "mock",
+        "choices": [
+            {
+                "index": 0,
+                "delta": delta,
+                "logprobs": None,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+
+
 def streaming_response(content: str | None, model: str, tool_calls: list[dict] | None):
     id = f"chatcmpl-{uuid4().hex}"
 
+    def chunk(delta: dict, finish_reason: str | None = None):
+        return f"data: {json.dumps(_stream_chunk(id, model, delta, finish_reason))}\n\n"
+
     if content is not None:
-        iterator = content
+        # `role` is announced once, in the opening chunk, and omitted after —
+        # repeating it on every delta is not what the API does.
+        for position, character in enumerate(content):
+            delta = {"content": character, "tool_calls": None}
+            if position == 0:
+                delta["role"] = "assistant"
+            yield chunk(delta)
+        yield chunk({}, finish_reason="stop")
     elif tool_calls is not None:
-        iterator = zip_longest(
-            *[
-                list(json.dumps(tool_call["function"]["arguments"]))
-                for tool_call in tool_calls
-            ]
-        )
+        # Each tool call is streamed on its own `index`: one header delta
+        # introducing id/type/name with empty arguments, then deltas carrying
+        # only the argument fragments. Clients accumulate fragments by index,
+        # so the index — not the position in this list — is what ties them
+        # together, and repeating id/type/name would corrupt the accumulation.
+        for index, tool_call in enumerate(tool_calls):
+            function = tool_call["function"]
+            header = {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "index": index,
+                        "id": tool_call["id"],
+                        "type": tool_call["type"],
+                        "function": {"name": function["name"], "arguments": ""},
+                    }
+                ],
+            }
+            if index == 0:
+                header["role"] = "assistant"
+            yield chunk(header)
+            for character in function["arguments"]:
+                yield chunk(
+                    {
+                        "tool_calls": [
+                            {"index": index, "function": {"arguments": character}}
+                        ]
+                    }
+                )
+        yield chunk({}, finish_reason="tool_calls")
     else:
         raise ValueError("Either content or tool_calls must not be None")
-
-    for i in iterator:
-        chunk = {
-            "id": id,
-            "object": "chat.completion.chunk",
-            "created": int(time()),
-            "model": model,
-            "system_fingerprint": "mock",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {
-                        "role": "assistant",
-                        "content": i if content is not None else None,
-                        "tool_calls": [
-                            {
-                                "id": tool_call["id"],
-                                "type": tool_call["type"],
-                                "function": {
-                                    "name": tool_call["function"]["name"],
-                                    "arguments": i[n],
-                                },
-                            }
-                            for n, tool_call in enumerate(tool_calls)
-                        ]
-                        if tool_calls is not None
-                        else None,
-                    },
-                    "logprobs": None,
-                    "finish_reason": None,
-                }
-            ],
-        }
-        yield f"data: {json.dumps(chunk)}\n\n"
 
     yield "data: [DONE]\n\n"
 
@@ -112,7 +143,7 @@ def response_struct_to_openai_format(response: PreDeterminedResponse):
             tool_call["type"] = "function"
             function = {
                 "name": tool_call.pop("name"),
-                "arguments": tool_call.pop("arguments"),
+                "arguments": _encode_arguments(tool_call.pop("arguments")),
             }
             tool_call["function"] = function
     else:

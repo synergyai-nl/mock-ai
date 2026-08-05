@@ -63,7 +63,7 @@ client.chat.completions.create(
   ).choices[0].message
 
 print(completion)
-#> ChatCompletionMessage(content=None, refusal=None, role='assistant', function_call=None, tool_calls=[ChatCompletionMessageToolCall(id='86ae5af5-75ce-43a5-a75b-4cadd864b3b3', function=Function(arguments={'first_arg': 'one'}, name='my_function'), type='function')])
+#> ChatCompletionMessage(content=None, refusal=None, role='assistant', function_call=None, tool_calls=[ChatCompletionMessageToolCall(id='86ae5af5-75ce-43a5-a75b-4cadd864b3b3', function=Function(arguments='{"first_arg": "one"}', name='my_function'), type='function')])
 ```
 
 Mock function call inputs must always have the 'name' string
@@ -230,7 +230,7 @@ response = client.chat.completions.create(
 print(response.choices[0].message.tool_calls[0].function.name)
 # >> "mock"
 print(response.choices[0].message.tool_calls[0].function.arguments)
-# >> "{"mock_arg": "mock_val"}"
+# >> '{"mock_arg": "mock_val"}'
 ```
 
 ## Configure responses
@@ -311,7 +311,7 @@ print(response.choices[0].message.tool_calls[0].function.name)
 # >> "get_delivery_date"
 
 print(response.choices[0].message.tool_calls[0].function.arguments)
-# >> "{'order_id': '1337'}"
+# >> '{"order_id": "1337"}'
 ```
 
 ## Development
