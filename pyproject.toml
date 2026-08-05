@@ -7,7 +7,7 @@ authors = [{ name = "Anibal Angulo", email = "ajcardoza2000@gmail.com" }]
 license = { text = "MIT" }
 requires-python = "<4.0,>=3.10"
 dependencies = [
-  "aiofiles<25.0.0,>=24.1.0",
+  "aiofiles>=24.1.0,<26.0.0",
   "fastapi[standard]<1.0.0,>=0.115.6",
   "starlette-compress<2.0.0,>=1.4.0",
   "orjson<4.0.0,>=3.10.14",
